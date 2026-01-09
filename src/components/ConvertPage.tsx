@@ -1,6 +1,6 @@
-import { useState, useRef, useCallback } from 'react'
+import { useState, useRef, useCallback, useEffect } from 'react'
 import * as pdfjsLib from 'pdfjs-dist'
-import { Upload, FileImage, FileText, Download, X, Palette, Check, Sparkles } from 'lucide-react'
+import { Upload, FileImage, Download, X, Palette, Sparkles, Plus, Minus, ChevronLeft, ChevronRight } from 'lucide-react'
 import { Button } from '@/components/ui/button'
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from '@/components/ui/card'
 import { PasswordPrompt } from '../App'
@@ -18,13 +18,20 @@ interface ConvertedFile {
   originalName: string
   blob: Blob
   previewUrl: string
+  thumbnailUrl?: string
   type: 'image' | 'pdf'
+  pages?: string[]  // Full-res page images for PDFs
 }
 
 function ConvertPage() {
   const [convertedFiles, setConvertedFiles] = useState<ConvertedFile[]>([])
+  const [sourceFiles, setSourceFiles] = useState<File[]>([])
   const [isProcessing, setIsProcessing] = useState(false)
   const [colorMode, setColorMode] = useState<ColorMode>('blue-auto')
+  const [selectedIndex, setSelectedIndex] = useState(0)
+  const [currentPage, setCurrentPage] = useState(0)
+  const [zoom, setZoom] = useState(1)
+  const [pdfPasswords, setPdfPasswords] = useState<Record<string, string>>({})
   const [passwordPrompt, setPasswordPrompt] = useState<PasswordPrompt>({
     show: false,
     fileName: '',
@@ -146,7 +153,7 @@ function ConvertPage() {
   }
 
   const loadPdfWithPassword = useCallback(async (file: File, arrayBuffer: ArrayBuffer) => {
-    let password: string | undefined
+    let password: string | undefined = pdfPasswords[file.name]
     let pdf: pdfjsLib.PDFDocumentProxy | null = null
 
     while (!pdf) {
@@ -158,6 +165,7 @@ function ConvertPage() {
           const inputPassword = await promptPassword(file.name)
           if (inputPassword === null) return null
           password = inputPassword
+          setPdfPasswords(prev => ({ ...prev, [file.name]: inputPassword }))
         } else {
           throw error
         }
@@ -165,7 +173,7 @@ function ConvertPage() {
     }
 
     return pdf
-  }, [promptPassword])
+  }, [promptPassword, pdfPasswords])
 
   const processImage = useCallback(async (file: File): Promise<ConvertedFile | null> => {
     return new Promise((resolve) => {
@@ -223,6 +231,22 @@ function ConvertPage() {
       }
 
       if (pageCanvases.length > 0) {
+        // Generate high-res page images for preview
+        const pageImages: string[] = []
+        for (const canvas of pageCanvases) {
+          pageImages.push(canvas.toDataURL('image/jpeg', 0.95))
+        }
+
+        // Generate thumbnail from first page
+        const thumbnailCanvas = document.createElement('canvas')
+        const scale = Math.min(300 / pageCanvases[0].width, 300 / pageCanvases[0].height, 1)
+        thumbnailCanvas.width = pageCanvases[0].width * scale
+        thumbnailCanvas.height = pageCanvases[0].height * scale
+        const thumbCtx = thumbnailCanvas.getContext('2d')
+        if (thumbCtx) {
+          thumbCtx.drawImage(pageCanvases[0], 0, 0, thumbnailCanvas.width, thumbnailCanvas.height)
+        }
+
         const { jsPDF } = await import('jspdf')
         const pdfDoc = new jsPDF({
           orientation: pageCanvases[0].width > pageCanvases[0].height ? 'landscape' : 'portrait',
@@ -247,7 +271,9 @@ function ConvertPage() {
           originalName: file.name.replace('.pdf', `${suffix}.pdf`),
           blob: pdfBlob,
           previewUrl: URL.createObjectURL(pdfBlob),
-          type: 'pdf'
+          thumbnailUrl: thumbnailCanvas.toDataURL('image/jpeg', 0.7),
+          type: 'pdf',
+          pages: pageImages
         }
       }
 
@@ -263,19 +289,32 @@ function ConvertPage() {
 
     setIsProcessing(true)
     const results: ConvertedFile[] = []
+    const newSourceFiles: File[] = []
 
     for (let i = 0; i < files.length; i++) {
       const file = files[i]
       if (file.type.startsWith('image/')) {
         const result = await processImage(file)
-        if (result) results.push(result)
+        if (result) {
+          results.push(result)
+          newSourceFiles.push(file)
+        }
       } else if (file.type === 'application/pdf') {
         const result = await processPdf(file)
-        if (result) results.push(result)
+        if (result) {
+          results.push(result)
+          newSourceFiles.push(file)
+        }
       }
     }
 
     setConvertedFiles(prev => [...prev, ...results])
+    setSourceFiles(prev => [...prev, ...newSourceFiles])
+    if (results.length > 0 && convertedFiles.length === 0) {
+      setSelectedIndex(0)
+      setCurrentPage(0)
+      setZoom(1)
+    }
     setIsProcessing(false)
 
     if (fileInputRef.current) fileInputRef.current.value = ''
@@ -298,6 +337,14 @@ function ConvertPage() {
       const newFiles = [...prev]
       URL.revokeObjectURL(newFiles[index].previewUrl)
       newFiles.splice(index, 1)
+      if (selectedIndex >= newFiles.length && newFiles.length > 0) {
+        setSelectedIndex(newFiles.length - 1)
+      }
+      return newFiles
+    })
+    setSourceFiles(prev => {
+      const newFiles = [...prev]
+      newFiles.splice(index, 1)
       return newFiles
     })
   }
@@ -305,7 +352,47 @@ function ConvertPage() {
   const clearAll = () => {
     convertedFiles.forEach(f => URL.revokeObjectURL(f.previewUrl))
     setConvertedFiles([])
+    setSourceFiles([])
+    setPdfPasswords({})
+    setSelectedIndex(0)
   }
+
+  const reconvertAll = useCallback(async () => {
+    if (sourceFiles.length === 0) return
+
+    setIsProcessing(true)
+    const results: ConvertedFile[] = []
+
+    for (const file of sourceFiles) {
+      if (file.type.startsWith('image/')) {
+        const result = await processImage(file)
+        if (result) results.push(result)
+      } else if (file.type === 'application/pdf') {
+        const result = await processPdf(file)
+        if (result) results.push(result)
+      }
+    }
+
+    // Revoke old URLs
+    convertedFiles.forEach(f => URL.revokeObjectURL(f.previewUrl))
+    setConvertedFiles(results)
+    setIsProcessing(false)
+  }, [sourceFiles, processImage, processPdf, convertedFiles])
+
+  // Reconvert when color mode changes and there are source files
+  useEffect(() => {
+    if (sourceFiles.length > 0) {
+      reconvertAll()
+    }
+    // Only run when colorMode changes
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [colorMode])
+
+  // Reset page and zoom when switching files
+  useEffect(() => {
+    setCurrentPage(0)
+    setZoom(1)
+  }, [selectedIndex])
 
   // Color mode definitions organized by family
   const colorFamilies: { family: ColorFamily; name: string; description: string; bgClass: string }[] = [
@@ -324,167 +411,242 @@ function ConvertPage() {
 
   return (
     <>
-      <div className="space-y-4 sm:space-y-6">
-        {/* Hero */}
-        <div className="text-center space-y-1.5 sm:space-y-2">
-          <h2 className="text-xl sm:text-2xl font-semibold tracking-tight">No Black Ink</h2>
-          <p className="text-sm text-muted-foreground max-w-md mx-auto">
-            Print documents using only one color ink. Choose based on what ink cartridges you have available.
-          </p>
-        </div>
+      <div className="flex flex-col lg:flex-row gap-4 lg:gap-6">
+        {/* Left Sidebar - Color Selector */}
+        <aside className="w-full lg:w-56 shrink-0">
+          <Card className="lg:sticky lg:top-20">
+            <CardHeader className="pb-3 px-4">
+              <CardTitle className="text-sm">Ink Color</CardTitle>
+            </CardHeader>
+            <CardContent className="px-4 space-y-3">
+              {/* Color Family Selection */}
+              <div className="space-y-2">
+                <p className="text-xs font-medium text-muted-foreground">Color</p>
+                <div className="grid grid-cols-5 gap-1">
+                  {colorFamilies.map(({ family, bgClass }) => {
+                    const currentFamily = getColorFamily(colorMode)
+                    const isSelected = currentFamily === family
+                    return (
+                      <button
+                        key={family}
+                        onClick={() => setColorMode(`${family}-${getModeType(colorMode)}` as ColorMode)}
+                        className={`
+                          aspect-square rounded flex items-center justify-center transition-all
+                          ${isSelected ? 'ring-2 ring-primary ring-offset-2' : 'hover:scale-105'}
+                        `}
+                      >
+                        <div className={`h-5 w-5 rounded ${bgClass}`} />
+                      </button>
+                    )
+                  })}
+                </div>
+              </div>
 
-        {/* Color Mode Selector */}
-        <Card>
-          <CardHeader className="pb-3 px-4 sm:px-6">
-            <CardTitle className="text-sm sm:text-base">Choose Your Ink Color</CardTitle>
-            <CardDescription className="text-xs sm:text-sm">Select the color based on available ink cartridges</CardDescription>
-          </CardHeader>
-          <CardContent className="px-4 sm:px-6 space-y-4">
-            {colorFamilies.map(({ family, name, description, bgClass }) => {
-              const currentFamily = getColorFamily(colorMode)
-              const currentMode = getModeType(colorMode)
-              const isSelectedFamily = currentFamily === family
+              {/* Mode Selection */}
+              <div className="space-y-2">
+                <p className="text-xs font-medium text-muted-foreground">Mode</p>
+                <div className="flex flex-col gap-1">
+                  {modeTypes.map(({ type, name, icon }) => {
+                    const currentMode = getModeType(colorMode)
+                    const isSelected = currentMode === type
+                    return (
+                      <button
+                        key={type}
+                        onClick={() => setColorMode(`${getColorFamily(colorMode)}-${type}` as ColorMode)}
+                        className={`
+                          flex items-center gap-2 p-2 rounded text-left text-xs transition-all
+                          ${isSelected ? 'bg-primary text-primary-foreground' : 'hover:bg-accent'}
+                        `}
+                      >
+                        {icon}
+                        <span className="font-medium">{name}</span>
+                      </button>
+                    )
+                  })}
+                </div>
+              </div>
+            </CardContent>
+          </Card>
+        </aside>
 
-              return (
-                <div key={family} className={`rounded-lg border-2 transition-all ${isSelectedFamily ? 'border-primary bg-primary/5' : 'border-border'}`}>
-                  <button
-                    onClick={() => setColorMode(`${family}-auto` as ColorMode)}
-                    className="w-full flex items-center gap-3 p-3 text-left"
-                  >
-                    <div className={`h-8 w-8 rounded-md ${bgClass} shrink-0`} />
-                    <div className="min-w-0 flex-1">
-                      <p className="font-medium text-sm">{name} Ink</p>
-                      <p className="text-xs text-muted-foreground">{description}</p>
+        {/* Center - Main Preview or Drop Zone */}
+        <div className="flex-1 min-w-0">
+          {convertedFiles.length > 0 ? (
+            <Card>
+              <CardHeader className="pb-3 px-4">
+                <div className="flex items-center justify-between gap-4">
+                  <div className="min-w-0 flex-1">
+                    <CardTitle className="text-base truncate">{convertedFiles[selectedIndex]?.originalName}</CardTitle>
+                    <CardDescription className="text-xs">
+                      {convertedFiles[selectedIndex]?.type === 'pdf' && convertedFiles[selectedIndex].pages
+                        ? `Page ${currentPage + 1} of ${convertedFiles[selectedIndex].pages.length}`
+                        : 'Image preview'}
+                    </CardDescription>
+                  </div>
+                  <div className="flex items-center gap-1">
+                    {/* Page navigation for PDFs */}
+                    {convertedFiles[selectedIndex]?.type === 'pdf' && (convertedFiles[selectedIndex].pages?.length || 0) > 1 && (
+                      <>
+                        <Button size="icon" variant="outline" className="h-7 w-7" onClick={() => setCurrentPage(p => Math.max(0, p - 1))} disabled={currentPage === 0}>
+                          <ChevronLeft className="h-3.5 w-3.5" />
+                        </Button>
+                        <Button size="icon" variant="outline" className="h-7 w-7" onClick={() => setCurrentPage(p => Math.min((convertedFiles[selectedIndex].pages?.length || 1) - 1, p + 1))} disabled={currentPage >= (convertedFiles[selectedIndex].pages?.length || 1) - 1}>
+                          <ChevronRight className="h-3.5 w-3.5" />
+                        </Button>
+                      </>
+                    )}
+                    {/* Zoom controls */}
+                    <Button size="icon" variant="outline" className="h-7 w-7" onClick={() => setZoom(z => Math.max(0.25, z - 0.25))} disabled={zoom <= 0.25}>
+                      <Minus className="h-3 w-3" />
+                    </Button>
+                    <span className="text-xs font-medium w-10 text-center">{Math.round(zoom * 100)}%</span>
+                    <Button size="icon" variant="outline" className="h-7 w-7" onClick={() => setZoom(z => Math.min(3, z + 0.25))} disabled={zoom >= 3}>
+                      <Plus className="h-3 w-3" />
+                    </Button>
+                    <Button size="sm" onClick={() => downloadFile(convertedFiles[selectedIndex])} disabled={isProcessing}>
+                      <Download className="h-4 w-4 mr-1" />
+                      Download
+                    </Button>
+                  </div>
+                </div>
+              </CardHeader>
+              <CardContent className="px-4">
+                <div className="bg-muted rounded-lg overflow-auto h-[calc(100vh-14rem)]">
+                  <div className="min-h-full flex items-center justify-center p-4">
+                    <img
+                      src={
+                        convertedFiles[selectedIndex]?.type === 'pdf' && convertedFiles[selectedIndex].pages
+                          ? convertedFiles[selectedIndex].pages[currentPage] || convertedFiles[selectedIndex].thumbnailUrl
+                          : convertedFiles[selectedIndex]?.previewUrl
+                      }
+                      alt={convertedFiles[selectedIndex]?.originalName}
+                      className="max-h-full object-contain transition-transform duration-200 origin-center"
+                      style={{ transform: `scale(${zoom})` }}
+                      draggable={false}
+                    />
+                  </div>
+                </div>
+              </CardContent>
+            </Card>
+          ) : (
+            <>
+              {/* Hero */}
+              <div className="text-center py-8">
+                <h2 className="text-2xl font-semibold tracking-tight">No Black Ink</h2>
+                <p className="text-sm text-muted-foreground mt-2">
+                  Print documents using only one color ink
+                </p>
+              </div>
+
+              {/* Drop Zone */}
+              <Card
+                className={`border-2 border-dashed transition-all cursor-pointer
+                  ${isProcessing ? 'border-muted bg-muted/50 cursor-not-allowed' : 'border-border hover:border-primary/50 hover:bg-accent/50'}
+                `}
+                onDrop={handleDrop}
+                onDragOver={(e) => e.preventDefault()}
+                onClick={() => !isProcessing && fileInputRef.current?.click()}
+              >
+                <CardContent className="flex flex-col items-center justify-center py-16 px-4">
+                  <input
+                    ref={fileInputRef}
+                    type="file"
+                    accept="image/*,.pdf"
+                    multiple
+                    onChange={(e) => handleFiles(e.target.files)}
+                    className="hidden"
+                    disabled={isProcessing}
+                  />
+                  {isProcessing ? (
+                    <div className="flex flex-col items-center gap-3">
+                      <div className="h-10 w-10 animate-spin rounded-full border-4 border-primary border-t-transparent" />
+                      <p className="text-sm text-muted-foreground">Processing...</p>
                     </div>
-                    {isSelectedFamily && <Check className="h-4 w-4 text-primary shrink-0" />}
-                  </button>
-                  {isSelectedFamily && (
-                    <div className="px-3 pb-3">
-                      <div className="flex gap-2">
-                        {modeTypes.map(({ type, name, description, icon }) => (
-                          <button
-                            key={type}
-                            onClick={() => setColorMode(`${family}-${type}` as ColorMode)}
-                            className={`
-                              flex-1 flex flex-col items-center gap-1.5 p-2 rounded-md border text-center transition-all
-                              ${currentMode === type
-                                ? 'border-primary bg-primary/10 text-primary'
-                                : 'border-border hover:border-primary/50 hover:bg-accent'
-                              }
-                            `}
-                          >
-                            {icon}
-                            <span className="text-xs font-medium">{name}</span>
-                            <span className="text-[10px] text-muted-foreground hidden sm:block">{description}</span>
-                          </button>
-                        ))}
+                  ) : (
+                    <div className="flex flex-col items-center gap-4">
+                      <div className="h-16 w-16 rounded-full bg-primary/10 flex items-center justify-center">
+                        <Upload className="h-8 w-8 text-primary" />
+                      </div>
+                      <div className="text-center">
+                        <p className="text-base font-medium">Drop files here or click to upload</p>
+                        <p className="text-sm text-muted-foreground mt-1">Images (PNG, JPG) and PDF files</p>
                       </div>
                     </div>
                   )}
-                </div>
-              )
-            })}
-          </CardContent>
-        </Card>
+                </CardContent>
+              </Card>
 
-        {/* Drop Zone */}
-        <Card
-          className={`border-2 border-dashed transition-all cursor-pointer
-            ${isProcessing ? 'border-muted bg-muted/50 cursor-not-allowed' : 'border-border hover:border-primary/50 hover:bg-accent/50'}
-          `}
-          onDrop={handleDrop}
-          onDragOver={(e) => e.preventDefault()}
-          onClick={() => !isProcessing && fileInputRef.current?.click()}
-        >
-          <CardContent className="flex flex-col items-center justify-center py-8 sm:py-12 px-4">
-            <input
-              ref={fileInputRef}
-              type="file"
-              accept="image/*,.pdf"
-              multiple
-              onChange={(e) => handleFiles(e.target.files)}
-              className="hidden"
-            />
-            {isProcessing ? (
-              <div className="flex flex-col items-center gap-3">
-                <div className="h-8 w-8 animate-spin rounded-full border-4 border-primary border-t-transparent" />
-                <p className="text-sm text-muted-foreground">Processing...</p>
-              </div>
-            ) : (
-              <div className="flex flex-col items-center gap-3">
-                <div className="h-12 w-12 rounded-full bg-primary/10 flex items-center justify-center">
-                  <Upload className="h-6 w-6 text-primary" />
+              {/* How it works */}
+              <div className="hidden sm:grid grid-cols-3 gap-6 py-8">
+                <div className="flex flex-col items-center gap-2 text-center">
+                  <div className="h-8 w-8 rounded-full bg-primary text-primary-foreground flex items-center justify-center text-sm font-semibold">1</div>
+                  <p className="text-xs text-muted-foreground">Select ink color</p>
                 </div>
-                <div className="text-center space-y-1">
-                  <p className="text-sm font-medium">Tap to upload files</p>
-                  <p className="text-xs text-muted-foreground">Images (PNG, JPG) and PDF files</p>
+                <div className="flex flex-col items-center gap-2 text-center">
+                  <div className="h-8 w-8 rounded-full bg-primary text-primary-foreground flex items-center justify-center text-sm font-semibold">2</div>
+                  <p className="text-xs text-muted-foreground">Upload documents</p>
+                </div>
+                <div className="flex flex-col items-center gap-2 text-center">
+                  <div className="h-8 w-8 rounded-full bg-primary text-primary-foreground flex items-center justify-center text-sm font-semibold">3</div>
+                  <p className="text-xs text-muted-foreground">Download & print</p>
                 </div>
               </div>
-            )}
-          </CardContent>
-        </Card>
+            </>
+          )}
+        </div>
 
-        {/* Results */}
+        {/* Right Sidebar - File List */}
         {convertedFiles.length > 0 && (
-          <Card>
-            <CardHeader className="pb-3 px-4 sm:px-6">
-              <div className="flex items-center justify-between gap-2">
-                <div className="min-w-0">
-                  <CardTitle className="text-sm sm:text-base">Converted Files</CardTitle>
-                  <CardDescription className="text-xs">{convertedFiles.length} ready</CardDescription>
+          <aside className="w-full lg:w-56 shrink-0">
+            <Card className="lg:sticky lg:top-20">
+              <CardHeader className="pb-3 px-4">
+                <div className="flex items-center justify-between">
+                  <CardTitle className="text-sm">Files</CardTitle>
+                  <div className="flex items-center gap-1">
+                    <Button variant="outline" size="sm" onClick={() => convertedFiles.forEach(downloadFile)} disabled={isProcessing} className="h-7 px-2 text-xs">
+                      All
+                    </Button>
+                    <Button variant="ghost" size="sm" onClick={clearAll} disabled={isProcessing} className="h-7 w-7 p-0">
+                      <X className="h-3.5 w-3.5" />
+                    </Button>
+                  </div>
                 </div>
-                <Button variant="ghost" size="sm" onClick={clearAll} className="shrink-0">
-                  Clear
-                </Button>
-              </div>
-            </CardHeader>
-            <CardContent className="px-4 sm:px-6">
-              <div className="space-y-2">
+              </CardHeader>
+              <CardContent className="px-3 space-y-1 max-h-[70vh] overflow-y-auto">
                 {convertedFiles.map((file, index) => (
-                  <div key={index} className="flex items-center gap-2 sm:gap-3 p-2.5 sm:p-3 rounded-lg border bg-card">
-                    <div className="h-9 w-9 sm:h-10 sm:w-10 rounded-lg bg-primary/10 flex items-center justify-center shrink-0">
-                      {file.type === 'pdf' ? <FileText className="h-4 w-4 sm:h-5 sm:w-5 text-primary" /> : <FileImage className="h-4 w-4 sm:h-5 sm:w-5 text-primary" />}
-                    </div>
-                    <span className="flex-1 min-w-0 text-xs sm:text-sm font-medium truncate">{file.originalName}</span>
-                    <div className="flex items-center gap-1 sm:gap-2 shrink-0">
-                      <Button size="sm" onClick={() => downloadFile(file)} className="gap-1 h-8 px-2 sm:px-3 text-xs">
-                        <Download className="h-3 w-3" />
-                        <span className="hidden xs:inline">Download</span>
-                      </Button>
-                      <Button size="icon" variant="ghost" onClick={() => removeFile(index)} className="h-8 w-8">
-                        <X className="h-4 w-4" />
-                      </Button>
-                    </div>
+                  <div
+                    key={index}
+                    className={`
+                      group flex items-center gap-2 p-2 rounded transition-all
+                      ${selectedIndex === index ? 'bg-accent border border-primary/30' : 'hover:bg-accent/50'}
+                    `}
+                  >
+                    <button
+                      onClick={() => setSelectedIndex(index)}
+                      className="flex items-center gap-2 flex-1 min-w-0"
+                    >
+                      <div className="h-10 w-10 bg-muted rounded flex items-center justify-center shrink-0 overflow-hidden">
+                        <img
+                          src={file.type === 'pdf' ? file.thumbnailUrl : file.previewUrl}
+                          alt=""
+                          className="w-full h-full object-contain"
+                        />
+                      </div>
+                      <span className="text-xs font-medium truncate">{file.originalName}</span>
+                    </button>
+                    <Button
+                      size="icon"
+                      variant="ghost"
+                      className="h-6 w-6 opacity-0 group-hover:opacity-100 transition-opacity"
+                      onClick={() => removeFile(index)}
+                    >
+                      <X className="h-3 w-3" />
+                    </Button>
                   </div>
                 ))}
-              </div>
-            </CardContent>
-          </Card>
-        )}
-
-        {/* How it works */}
-        {convertedFiles.length === 0 && (
-          <Card>
-            <CardHeader className="px-4 sm:px-6">
-              <CardTitle className="text-sm sm:text-base text-center">How it works</CardTitle>
-            </CardHeader>
-            <CardContent className="px-4 sm:px-6">
-              <div className="grid grid-cols-3 gap-3 sm:gap-6">
-                <div className="flex flex-col items-center gap-1.5 sm:gap-2 text-center">
-                  <div className="h-7 w-7 sm:h-8 sm:w-8 rounded-full bg-primary text-primary-foreground flex items-center justify-center text-xs sm:text-sm font-semibold shrink-0">1</div>
-                  <p className="text-[11px] sm:text-sm text-muted-foreground">Choose mode</p>
-                </div>
-                <div className="flex flex-col items-center gap-1.5 sm:gap-2 text-center">
-                  <div className="h-7 w-7 sm:h-8 sm:w-8 rounded-full bg-primary text-primary-foreground flex items-center justify-center text-xs sm:text-sm font-semibold shrink-0">2</div>
-                  <p className="text-[11px] sm:text-sm text-muted-foreground">Upload file</p>
-                </div>
-                <div className="flex flex-col items-center gap-1.5 sm:gap-2 text-center">
-                  <div className="h-7 w-7 sm:h-8 sm:w-8 rounded-full bg-primary text-primary-foreground flex items-center justify-center text-xs sm:text-sm font-semibold shrink-0">3</div>
-                  <p className="text-[11px] sm:text-sm text-muted-foreground">Download</p>
-                </div>
-              </div>
-            </CardContent>
-          </Card>
+              </CardContent>
+            </Card>
+          </aside>
         )}
       </div>
 
