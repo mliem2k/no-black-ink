@@ -6,7 +6,13 @@ import { Card, CardContent, CardDescription, CardHeader, CardTitle } from '@/com
 import { PasswordPrompt } from '../App'
 import PasswordModal from './PasswordModal'
 
-type ColorMode = 'auto' | 'grayscale-only' | 'all-blue'
+type ColorMode = 'blue-auto' | 'blue-grayscale' | 'blue-all'
+  | 'brown-auto' | 'brown-grayscale' | 'brown-all'
+  | 'green-auto' | 'green-grayscale' | 'green-all'
+  | 'purple-auto' | 'purple-grayscale' | 'purple-all'
+  | 'red-auto' | 'red-grayscale' | 'red-all'
+
+type ColorFamily = 'blue' | 'brown' | 'green' | 'purple' | 'red'
 
 interface ConvertedFile {
   originalName: string
@@ -18,7 +24,7 @@ interface ConvertedFile {
 function ConvertPage() {
   const [convertedFiles, setConvertedFiles] = useState<ConvertedFile[]>([])
   const [isProcessing, setIsProcessing] = useState(false)
-  const [colorMode, setColorMode] = useState<ColorMode>('auto')
+  const [colorMode, setColorMode] = useState<ColorMode>('blue-auto')
   const [passwordPrompt, setPasswordPrompt] = useState<PasswordPrompt>({
     show: false,
     fileName: '',
@@ -26,6 +32,23 @@ function ConvertPage() {
     onCancel: () => {}
   })
   const fileInputRef = useRef<HTMLInputElement>(null)
+
+  const getColorFamily = (mode: ColorMode): ColorFamily => {
+    return mode.split('-')[0] as ColorFamily
+  }
+
+  const getModeType = (mode: ColorMode): 'auto' | 'grayscale' | 'all' => {
+    return mode.split('-')[1] as 'auto' | 'grayscale' | 'all'
+  }
+
+  const getFileSuffix = (mode: ColorMode): string => {
+    const family = getColorFamily(mode)
+    const type = getModeType(mode)
+    if (type === 'all') {
+      return `_${family}full`
+    }
+    return `_${family}`
+  }
 
   const promptPassword = useCallback((fileName: string): Promise<string | null> => {
     return new Promise((resolve) => {
@@ -57,6 +80,35 @@ function ConvertPage() {
     const imageData = ctx.getImageData(0, 0, canvas.width, canvas.height)
     const data = imageData.data
 
+    const colorFamily = getColorFamily(colorMode)
+    const modeType = getModeType(colorMode)
+
+    // Color mappings for each family: [rMult, gMult, bMult, rBase, gBase, bBase]
+    const colorMaps: Record<ColorFamily, { all: [number, number, number, number, number, number]; auto: [number, number, number, number, number, number] }> = {
+      blue: {
+        all: [0.4, 0.6, 0.4, 0, 30, 180],
+        auto: [0.3, 0.5, 0.3, 0, 40, 200]
+      },
+      brown: {
+        all: [0.7, 0.5, 0.3, 60, 40, 10],
+        auto: [0.6, 0.4, 0.2, 80, 50, 20]
+      },
+      green: {
+        all: [0.3, 0.7, 0.4, 0, 120, 30],
+        auto: [0.2, 0.6, 0.3, 0, 160, 40]
+      },
+      purple: {
+        all: [0.6, 0.3, 0.6, 60, 0, 100],
+        auto: [0.5, 0.2, 0.5, 80, 0, 140]
+      },
+      red: {
+        all: [0.8, 0.2, 0.2, 120, 0, 0],
+        auto: [0.7, 0.1, 0.1, 160, 0, 0]
+      }
+    }
+
+    const [rMult, gMult, bMult, rBase, gBase, bBase] = colorMaps[colorFamily][modeType === 'all' ? 'all' : 'auto']
+
     for (let i = 0; i < data.length; i += 4) {
       const r = data[i]
       const g = data[i + 1]
@@ -71,33 +123,22 @@ function ConvertPage() {
 
       let shouldConvert = false
 
-      switch (colorMode) {
-        case 'grayscale-only':
-          shouldConvert = pixelIsGrayscale && isDark
-          break
-        case 'all-blue':
-          shouldConvert = true
-          break
-        case 'auto':
-        default:
-          shouldConvert = pixelIsGrayscale && isDark
-          break
+      if (modeType === 'grayscale') {
+        shouldConvert = pixelIsGrayscale && isDark
+      } else if (modeType === 'all') {
+        shouldConvert = true
+      } else {
+        shouldConvert = pixelIsGrayscale && isDark
       }
 
       if (shouldConvert) {
-        const darkness = colorMode === 'all-blue'
+        const darkness = modeType === 'all'
           ? 1 - (luminance / 255)
           : 1 - (luminance / 180)
 
-        if (colorMode === 'all-blue') {
-          data[i] = Math.floor(r * 0.4)
-          data[i + 1] = Math.floor(g * 0.6)
-          data[i + 2] = Math.floor(150 + b * 0.4 + darkness * 105)
-        } else {
-          data[i] = Math.floor(r * 0.3)
-          data[i + 1] = Math.floor(g * 0.5)
-          data[i + 2] = Math.floor(180 + b * 0.3 + darkness * 75)
-        }
+        data[i] = Math.floor(r * rMult + rBase + darkness * rBase * 0.5)
+        data[i + 1] = Math.floor(g * gMult + gBase + darkness * gBase * 0.3)
+        data[i + 2] = Math.floor(b * bMult + bBase + darkness * bBase * 0.3)
       }
     }
 
@@ -141,7 +182,7 @@ function ConvertPage() {
 
         canvas.toBlob((blob) => {
           if (blob) {
-            const suffix = colorMode === 'all-blue' ? '_fullblue' : '_blue'
+            const suffix = getFileSuffix(colorMode)
             resolve({
               originalName: file.name.replace(/\.[^.]+$/, `${suffix}.png`),
               blob,
@@ -200,7 +241,7 @@ function ConvertPage() {
         })
 
         const pdfBlob = pdfDoc.output('blob')
-        const suffix = colorMode === 'all-blue' ? '_fullblue' : '_blue'
+        const suffix = getFileSuffix(colorMode)
 
         return {
           originalName: file.name.replace('.pdf', `${suffix}.pdf`),
@@ -266,25 +307,19 @@ function ConvertPage() {
     setConvertedFiles([])
   }
 
-  const colorModes: { value: ColorMode; label: string; description: string; icon: React.ReactNode }[] = [
-    {
-      value: 'auto',
-      label: 'Auto',
-      description: 'Detects and converts grayscale/black text to blue',
-      icon: <Sparkles className="h-4 w-4" />
-    },
-    {
-      value: 'grayscale-only',
-      label: 'Grayscale Only',
-      description: 'Only converts black & gray pixels, preserves colors',
-      icon: <FileImage className="h-4 w-4" />
-    },
-    {
-      value: 'all-blue',
-      label: 'Full Blue Tint',
-      description: 'Converts everything to blue tones',
-      icon: <Palette className="h-4 w-4" />
-    }
+  // Color mode definitions organized by family
+  const colorFamilies: { family: ColorFamily; name: string; description: string; bgClass: string }[] = [
+    { family: 'blue', name: 'Blue', description: 'Use when you have blue ink', bgClass: 'bg-blue-500' },
+    { family: 'brown', name: 'Brown', description: 'Use when you have red + green ink', bgClass: 'bg-amber-700' },
+    { family: 'green', name: 'Green', description: 'Use when you have green ink', bgClass: 'bg-green-600' },
+    { family: 'purple', name: 'Purple', description: 'Use when you have red + blue ink', bgClass: 'bg-purple-600' },
+    { family: 'red', name: 'Red', description: 'Use when you have red ink', bgClass: 'bg-red-600' }
+  ]
+
+  const modeTypes: { type: 'auto' | 'grayscale' | 'all'; name: string; description: string; icon: React.ReactNode }[] = [
+    { type: 'auto', name: 'Smart', description: 'Auto-detects black text', icon: <Sparkles className="h-3.5 w-3.5" /> },
+    { type: 'grayscale', name: 'Grayscale', description: 'Only converts B&W', icon: <FileImage className="h-3.5 w-3.5" /> },
+    { type: 'all', name: 'Full Tint', description: 'Converts everything', icon: <Palette className="h-3.5 w-3.5" /> }
   ]
 
   return (
@@ -292,41 +327,63 @@ function ConvertPage() {
       <div className="space-y-4 sm:space-y-6">
         {/* Hero */}
         <div className="text-center space-y-1.5 sm:space-y-2">
-          <h2 className="text-xl sm:text-2xl font-semibold tracking-tight">Convert to Blue Ink</h2>
+          <h2 className="text-xl sm:text-2xl font-semibold tracking-tight">No Black Ink</h2>
           <p className="text-sm text-muted-foreground max-w-md mx-auto">
-            Print documents using only blue ink. Perfect when you're out of black.
+            Print documents using only one color ink. Choose based on what ink cartridges you have available.
           </p>
         </div>
 
         {/* Color Mode Selector */}
         <Card>
           <CardHeader className="pb-3 px-4 sm:px-6">
-            <CardTitle className="text-sm sm:text-base">Color Mode</CardTitle>
-            <CardDescription className="text-xs sm:text-sm">Choose how the blue filter is applied</CardDescription>
+            <CardTitle className="text-sm sm:text-base">Choose Your Ink Color</CardTitle>
+            <CardDescription className="text-xs sm:text-sm">Select the color based on available ink cartridges</CardDescription>
           </CardHeader>
-          <CardContent className="px-4 sm:px-6">
-            <div className="grid grid-cols-1 sm:grid-cols-3 gap-2 sm:gap-3">
-              {colorModes.map((mode) => (
-                <button
-                  key={mode.value}
-                  onClick={() => setColorMode(mode.value)}
-                  className={`
-                    flex flex-col items-start gap-1.5 sm:gap-2 p-3 sm:p-4 rounded-lg border-2 text-left transition-all
-                    ${colorMode === mode.value
-                      ? 'border-primary bg-primary/5'
-                      : 'border-border hover:border-primary/50 hover:bg-accent'
-                    }
-                  `}
-                >
-                  <div className={`flex items-center gap-1.5 sm:gap-2 ${colorMode === mode.value ? 'text-primary' : ''}`}>
-                    {mode.icon}
-                    <span className="text-sm sm:text-base font-medium">{mode.label}</span>
-                    {colorMode === mode.value && <Check className="h-3.5 w-3.5 sm:h-4 sm:w-4 ml-auto" />}
-                  </div>
-                  <span className="text-[11px] sm:text-xs text-muted-foreground line-clamp-2">{mode.description}</span>
-                </button>
-              ))}
-            </div>
+          <CardContent className="px-4 sm:px-6 space-y-4">
+            {colorFamilies.map(({ family, name, description, bgClass }) => {
+              const currentFamily = getColorFamily(colorMode)
+              const currentMode = getModeType(colorMode)
+              const isSelectedFamily = currentFamily === family
+
+              return (
+                <div key={family} className={`rounded-lg border-2 transition-all ${isSelectedFamily ? 'border-primary bg-primary/5' : 'border-border'}`}>
+                  <button
+                    onClick={() => setColorMode(`${family}-auto` as ColorMode)}
+                    className="w-full flex items-center gap-3 p-3 text-left"
+                  >
+                    <div className={`h-8 w-8 rounded-md ${bgClass} shrink-0`} />
+                    <div className="min-w-0 flex-1">
+                      <p className="font-medium text-sm">{name} Ink</p>
+                      <p className="text-xs text-muted-foreground">{description}</p>
+                    </div>
+                    {isSelectedFamily && <Check className="h-4 w-4 text-primary shrink-0" />}
+                  </button>
+                  {isSelectedFamily && (
+                    <div className="px-3 pb-3">
+                      <div className="flex gap-2">
+                        {modeTypes.map(({ type, name, description, icon }) => (
+                          <button
+                            key={type}
+                            onClick={() => setColorMode(`${family}-${type}` as ColorMode)}
+                            className={`
+                              flex-1 flex flex-col items-center gap-1.5 p-2 rounded-md border text-center transition-all
+                              ${currentMode === type
+                                ? 'border-primary bg-primary/10 text-primary'
+                                : 'border-border hover:border-primary/50 hover:bg-accent'
+                              }
+                            `}
+                          >
+                            {icon}
+                            <span className="text-xs font-medium">{name}</span>
+                            <span className="text-[10px] text-muted-foreground hidden sm:block">{description}</span>
+                          </button>
+                        ))}
+                      </div>
+                    </div>
+                  )}
+                </div>
+              )
+            })}
           </CardContent>
         </Card>
 
