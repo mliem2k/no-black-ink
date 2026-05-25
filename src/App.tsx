@@ -1,5 +1,4 @@
 import { useState, useEffect } from 'react'
-import * as pdfjsLib from 'pdfjs-dist'
 import { Tabs, TabsList, TabsTrigger } from '@/components/ui/tabs'
 import { Upload, Lock, Moon, Sun } from 'lucide-react'
 import { Button } from '@/components/ui/button'
@@ -7,23 +6,12 @@ import ConvertPage from './components/ConvertPage'
 import UnlockPdfPage from './components/UnlockPdfPage'
 import './App.css'
 
-// Set up PDF.js worker
-pdfjsLib.GlobalWorkerOptions.workerSrc = `https://cdnjs.cloudflare.com/ajax/libs/pdf.js/${pdfjsLib.version}/pdf.worker.min.mjs`
-
-interface PasswordPrompt {
-  show: boolean
-  fileName: string
-  onSubmit: (password: string) => void
-  onCancel: () => void
-}
-
 function App() {
   const [currentPage, setCurrentPage] = useState<'convert' | 'unlock'>('convert')
   const [theme, setTheme] = useState<'light' | 'dark'>('light')
 
-  // Load theme from localStorage on mount, detect system preference
   useEffect(() => {
-    const savedTheme = localStorage.getItem('theme') as 'light' | 'dark' | null
+    const saved = localStorage.getItem('theme') as 'light' | 'dark' | null
     const systemDark = window.matchMedia('(prefers-color-scheme: dark)')
 
     const applyTheme = (isDark: boolean) => {
@@ -31,33 +19,24 @@ function App() {
       document.documentElement.classList.toggle('dark', isDark)
     }
 
-    if (savedTheme) {
-      applyTheme(savedTheme === 'dark')
-    } else {
-      applyTheme(systemDark.matches)
-    }
+    applyTheme(saved ? saved === 'dark' : systemDark.matches)
 
-    // Listen for system theme changes (only if user hasn't manually set a preference)
     const handleSystemChange = (e: MediaQueryListEvent) => {
-      if (!localStorage.getItem('theme')) {
-        applyTheme(e.matches)
-      }
+      if (!localStorage.getItem('theme')) applyTheme(e.matches)
     }
-
     systemDark.addEventListener('change', handleSystemChange)
     return () => systemDark.removeEventListener('change', handleSystemChange)
   }, [])
 
   const toggleTheme = () => {
-    const newTheme = theme === 'light' ? 'dark' : 'light'
-    setTheme(newTheme)
-    localStorage.setItem('theme', newTheme)
-    document.documentElement.classList.toggle('dark', newTheme === 'dark')
+    const next = theme === 'light' ? 'dark' : 'light'
+    setTheme(next)
+    localStorage.setItem('theme', next)
+    document.documentElement.classList.toggle('dark', next === 'dark')
   }
 
   return (
     <div className="min-h-screen bg-background">
-      {/* Header */}
       <header className="sticky top-0 z-40 border-b border-border/40 bg-background/95 backdrop-blur supports-[backdrop-filter]:bg-background/60">
         <div className="container max-w-5xl mx-auto">
           <div className="flex items-center justify-between py-3 px-4 sm:px-6 gap-2">
@@ -94,13 +73,11 @@ function App() {
         </div>
       </header>
 
-      {/* Main Content */}
       <main className="container max-w-5xl mx-auto py-4 sm:py-6 px-4 sm:px-6">
         {currentPage === 'convert' && <ConvertPage />}
         {currentPage === 'unlock' && <UnlockPdfPage />}
       </main>
 
-      {/* Footer */}
       <footer className="border-t border-border/40 py-4 mt-8">
         <div className="container max-w-5xl mx-auto px-4 text-center">
           <p className="text-xs text-muted-foreground">
@@ -113,4 +90,3 @@ function App() {
 }
 
 export default App
-export type { PasswordPrompt }
