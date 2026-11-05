@@ -18,7 +18,10 @@ export async function loadPdfWithPassword(
 
   while (!pdf) {
     try {
-      pdf = await pdfjsLib.getDocument({ data: arrayBuffer, password }).promise
+      // pdf.js transfers the buffer, which detaches it. Retrying after a wrong
+      // password needs a fresh copy or the next getDocument call throws.
+      const data = arrayBuffer.slice(0)
+      pdf = await pdfjsLib.getDocument({ data, password }).promise
     } catch (error: any) {
       if (error?.name === 'PasswordException' || error?.message?.includes('password')) {
         const entered = await promptPassword(file.name)

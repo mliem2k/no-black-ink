@@ -1,5 +1,5 @@
 import { useEffect, useRef } from 'react'
-import { Lock } from 'lucide-react'
+import { LockKeyhole } from 'lucide-react'
 import {
   Dialog,
   DialogContent,
@@ -40,42 +40,39 @@ function PasswordModal({ show, fileName, onSubmit, onCancel }: PasswordModalProp
 
   return (
     <Dialog open={show} onOpenChange={(open) => !open && onCancel()}>
-      <DialogContent className="sm:max-w-md w-[95vw] mx-auto">
-        <DialogHeader className="space-y-2 sm:space-y-3">
-          <div className="flex items-center gap-2">
-            <div className="h-8 w-8 rounded-full bg-primary/10 flex items-center justify-center shrink-0">
-              <Lock className="h-4 w-4 text-primary" />
-            </div>
-            <DialogTitle className="text-base sm:text-lg">Password Required</DialogTitle>
+      <DialogContent className="w-[calc(100vw-2rem)] max-w-md">
+        <DialogHeader>
+          <div className="mb-2 flex h-8 w-8 items-center justify-center rounded-md border border-border bg-elevated">
+            <LockKeyhole className="h-4 w-4 text-foreground" aria-hidden="true" />
           </div>
-          <DialogDescription className="text-xs sm:text-sm">
-            <span className="font-medium text-foreground block truncate">{fileName}</span>
-            <span className="mt-1 block">Enter the password to unlock this PDF.</span>
+          <DialogTitle>Password required</DialogTitle>
+          <DialogDescription>
+            <span className="block truncate font-medium text-foreground">{fileName}</span>
+            Enter the password to unlock this PDF. It stays in memory and is never sent anywhere.
           </DialogDescription>
         </DialogHeader>
+
         <form onSubmit={handleSubmit}>
-          <div className="space-y-3 sm:space-y-4 py-2 sm:py-4">
-            <div className="space-y-1.5 sm:space-y-2">
-              <Label htmlFor="password" className="text-sm">Password</Label>
-              <Input
-                ref={inputRef}
-                id="password"
-                name="password"
-                type="password"
-                placeholder="Enter password"
-                autoComplete="current-password"
-                className="h-11"
-                required
-              />
-            </div>
+          <div className="py-1">
+            <Label htmlFor="password" className="mb-2 block text-[12px]">
+              Password
+            </Label>
+            <Input
+              ref={inputRef}
+              id="password"
+              name="password"
+              type="password"
+              placeholder="Enter password"
+              autoComplete="current-password"
+              className="h-10"
+              required
+            />
           </div>
-          <DialogFooter className="gap-2 sm:gap-3 flex-col-reverse sm:flex-row">
-            <Button type="button" variant="outline" onClick={onCancel} className="w-full sm:w-auto">
+          <DialogFooter className="mt-5">
+            <Button type="button" variant="outline" onClick={onCancel}>
               Cancel
             </Button>
-            <Button type="submit" className="w-full sm:w-auto">
-              Unlock
-            </Button>
+            <Button type="submit">Unlock</Button>
           </DialogFooter>
         </form>
       </DialogContent>

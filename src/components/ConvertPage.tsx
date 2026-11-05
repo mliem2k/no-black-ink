@@ -1,6 +1,13 @@
 import { useState, useCallback, useEffect, useRef } from 'react'
-import { FileImage, Palette, Sparkles, FileText, Image as ImageIcon, Lock, Zap } from 'lucide-react'
-import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card'
+import {
+  Check,
+  Contrast,
+  Files,
+  PaintBucket,
+  Palette,
+  ShieldCheck,
+  Sparkles
+} from 'lucide-react'
 import { ProcessedFile } from '../types'
 import { usePasswordPrompt } from '../hooks/usePasswordPrompt'
 import { loadPdfWithPassword, renderPdfPages, revokeFileUrls } from '../lib/pdfUtils'
@@ -8,6 +15,7 @@ import { DropZone } from './DropZone'
 import { PreviewPanel } from './PreviewPanel'
 import { FileListSidebar } from './FileListSidebar'
 import PasswordModal from './PasswordModal'
+import { cn } from '@/lib/utils'
 
 type ColorMode =
   | 'blue-auto' | 'blue-grayscale' | 'blue-all'
@@ -42,18 +50,46 @@ const COLOR_MAPS: Record<
   red:    { all: [0.8, 0.2, 0.2, 120, 0, 0],     auto: [0.7, 0.1, 0.1, 160, 0, 0] }
 }
 
-const COLOR_FAMILIES: { family: ColorFamily; name: string; bgClass: string; hex: string }[] = [
-  { family: 'blue',   name: 'Blue',   bgClass: 'bg-blue-500',   hex: '#3b82f6' },
-  { family: 'brown',  name: 'Brown',  bgClass: 'bg-amber-700',  hex: '#92400e' },
-  { family: 'green',  name: 'Green',  bgClass: 'bg-green-600',  hex: '#16a34a' },
-  { family: 'purple', name: 'Purple', bgClass: 'bg-purple-600', hex: '#9333ea' },
-  { family: 'red',    name: 'Red',    bgClass: 'bg-red-600',    hex: '#dc2626' }
+const COLOR_FAMILIES: { family: ColorFamily; name: string; hex: string }[] = [
+  { family: 'blue',   name: 'Blue',   hex: '#3b82f6' },
+  { family: 'brown',  name: 'Brown',  hex: '#a16207' },
+  { family: 'green',  name: 'Green',  hex: '#16a34a' },
+  { family: 'purple', name: 'Purple', hex: '#8b5cf6' },
+  { family: 'red',    name: 'Red',    hex: '#ef4444' }
 ]
 
-const MODE_TYPES: { type: 'auto' | 'grayscale' | 'all'; name: string; description: string; icon: React.ReactNode }[] = [
-  { type: 'auto',      name: 'Smart',      description: 'Auto-detects black text', icon: <Sparkles className="h-3.5 w-3.5" /> },
-  { type: 'grayscale', name: 'Grayscale',  description: 'Only converts B&W',       icon: <FileImage className="h-3.5 w-3.5" /> },
-  { type: 'all',       name: 'Full Tint',  description: 'Converts everything',      icon: <Palette className="h-3.5 w-3.5" /> }
+const MODE_TYPES = [
+  {
+    type: 'auto' as const,
+    name: 'Smart',
+    description: 'Converts black and near-black pixels only. Photos and existing color stay untouched.',
+    icon: Sparkles
+  },
+  {
+    type: 'grayscale' as const,
+    name: 'Grayscale',
+    description: 'Converts grayscale pixels only. Existing color in the document is preserved.',
+    icon: Contrast
+  },
+  {
+    type: 'all' as const,
+    name: 'Full tint',
+    description: 'Applies the ink color to the whole page, including photos and graphics.',
+    icon: PaintBucket
+  }
+]
+
+const FEATURES = [
+  { icon: Palette, title: '5 ink colors', body: 'Blue, brown, green, purple, red.' },
+  { icon: Sparkles, title: '3 modes', body: 'Smart, grayscale and full tint.' },
+  { icon: Files, title: 'PDF & images', body: 'Multi-page PDFs, PNG and JPG.' },
+  { icon: ShieldCheck, title: 'Stays local', body: 'Nothing is uploaded.' }
+]
+
+const STEPS = [
+  'Pick an ink color and conversion mode.',
+  'Drop a PDF, PNG or JPG into the page.',
+  'Download the converted file and print.'
 ]
 
 function applyColorFilter(canvas: HTMLCanvasElement, mode: ColorMode): void {
@@ -90,6 +126,8 @@ function ConvertPage() {
   const [currentPage, setCurrentPage] = useState(0)
   const [zoom, setZoom] = useState(1)
   const [pdfPasswords, setPdfPasswords] = useState<Record<string, string>>({})
+
+  const addInputRef = useRef<HTMLInputElement>(null)
 
   const { prompt, promptPassword } = usePasswordPrompt()
 
@@ -257,181 +295,265 @@ function ConvertPage() {
     setSelectedIndex(0)
   }
 
+  const hasFiles = convertedFiles.length > 0
+  const activeMode = MODE_TYPES.find(mode => mode.type === getModeType(colorMode)) ?? MODE_TYPES[0]
+  const ActiveModeIcon = activeMode.icon
+  const activeColor = COLOR_FAMILIES.find(color => color.family === getColorFamily(colorMode)) ?? COLOR_FAMILIES[0]
+
+  const selectColor = (family: ColorFamily) =>
+    setColorMode(`${family}-${getModeType(colorMode)}` as ColorMode)
+
+  const selectMode = (type: 'auto' | 'grayscale' | 'all') =>
+    setColorMode(`${getColorFamily(colorMode)}-${type}` as ColorMode)
+
+  const mobileInkControls = (
+    <div className="mb-4 rounded-xl border border-border bg-card/50 p-3 lg:hidden">
+      <div className="flex items-center justify-between px-0.5">
+        <p className="text-[11px] font-medium text-foreground">Ink color</p>
+        <span className="font-mono text-[10px] uppercase tracking-[0.08em] text-dim">Output</span>
+      </div>
+      <div className="mt-2 grid grid-cols-5 gap-1" role="group" aria-label="Ink color">
+        {COLOR_FAMILIES.map(({ family, name, hex }) => {
+          const isSelected = getColorFamily(colorMode) === family
+          return (
+            <button
+              key={family}
+              type="button"
+              aria-pressed={isSelected}
+              onClick={() => selectColor(family)}
+              className={cn(
+                'flex h-12 flex-col items-center justify-center gap-1.5 rounded-md border text-[10.5px] font-medium transition-colors duration-150',
+                isSelected
+                  ? 'border-line-strong bg-accent text-foreground'
+                  : 'border-transparent text-muted-foreground hover:bg-accent/60 hover:text-foreground'
+              )}
+            >
+              <span
+                className="h-3.5 w-3.5 rounded-full shadow-[inset_0_0_0_1px_oklch(0_0_0/0.18)]"
+                style={{ backgroundColor: hex }}
+                aria-hidden="true"
+              />
+              {name}
+            </button>
+          )
+        })}
+      </div>
+      <div className="mt-2 grid grid-cols-3 gap-1" role="group" aria-label="Conversion mode">
+        {MODE_TYPES.map(({ type, name, icon: Icon }) => {
+          const isSelected = getModeType(colorMode) === type
+          return (
+            <button
+              key={type}
+              type="button"
+              aria-pressed={isSelected}
+              onClick={() => selectMode(type)}
+              className={cn(
+                'flex h-9 items-center justify-center gap-1.5 rounded-md border text-[11px] font-medium transition-colors duration-150',
+                isSelected
+                  ? 'border-line-strong bg-accent text-foreground'
+                  : 'border-transparent text-muted-foreground hover:bg-accent/60 hover:text-foreground'
+              )}
+            >
+              <Icon className="h-3 w-3" aria-hidden="true" />
+              {name}
+            </button>
+          )
+        })}
+      </div>
+      <p className="mt-2 px-0.5 text-[10.5px] leading-relaxed text-dim">{activeMode.description}</p>
+    </div>
+  )
+
   return (
     <>
-      <div className="flex flex-col lg:flex-row gap-4 lg:gap-6">
-        {/* Left Sidebar — Color Selector */}
-        <aside className="w-full lg:w-56 shrink-0">
-          <Card className="lg:sticky lg:top-20">
-            <CardHeader className="pb-3 px-4">
-              <CardTitle className="text-sm">Ink Color</CardTitle>
-            </CardHeader>
-            <CardContent className="px-4 space-y-3">
-              <div className="space-y-2">
-                <p className="text-xs font-medium text-muted-foreground">Color</p>
-                <div className="grid grid-cols-5 gap-1">
-                  {COLOR_FAMILIES.map(({ family, bgClass }) => {
-                    const isSelected = getColorFamily(colorMode) === family
-                    return (
-                      <button
-                        key={family}
-                        onClick={() => setColorMode(`${family}-${getModeType(colorMode)}` as ColorMode)}
-                        className={`aspect-square rounded flex items-center justify-center transition-all
-                          ${isSelected ? 'ring-2 ring-primary ring-offset-2' : 'hover:scale-105'}`}
-                      >
-                        <div className={`h-5 w-5 rounded ${bgClass}`} />
-                      </button>
-                    )
-                  })}
-                </div>
-              </div>
-              <div className="space-y-2">
-                <p className="text-xs font-medium text-muted-foreground">Mode</p>
-                <div className="flex flex-col gap-1">
-                  {MODE_TYPES.map(({ type, name, icon }) => {
-                    const isSelected = getModeType(colorMode) === type
-                    return (
-                      <button
-                        key={type}
-                        onClick={() => setColorMode(`${getColorFamily(colorMode)}-${type}` as ColorMode)}
-                        className={`flex items-center gap-2 p-2 rounded text-left text-xs transition-all
-                          ${isSelected ? 'bg-primary text-primary-foreground' : 'hover:bg-accent'}`}
-                      >
-                        {icon}
-                        <span className="font-medium">{name}</span>
-                      </button>
-                    )
-                  })}
-                </div>
-              </div>
-            </CardContent>
-          </Card>
+      <div
+        className={cn(
+          'grid items-start gap-6 lg:gap-8',
+          hasFiles
+            ? 'lg:grid-cols-[232px_minmax(0,1fr)] xl:grid-cols-[232px_minmax(0,1fr)_232px]'
+            : 'lg:grid-cols-[232px_minmax(0,1fr)]'
+        )}
+      >
+        {/* Ink controls */}
+        <aside className="hidden lg:sticky lg:top-[5.5rem] lg:block">
+          <div className="overflow-hidden rounded-xl border border-border bg-card/50">
+            <div className="flex items-center justify-between border-b border-border px-4 py-3">
+              <h2 className="text-[12px] font-medium text-foreground">Ink</h2>
+              <span className="font-mono text-[10px] uppercase tracking-[0.08em] text-dim">5 colors</span>
+            </div>
+
+            <div className="p-1.5" role="group" aria-label="Ink color">
+              {COLOR_FAMILIES.map(({ family, name, hex }) => {
+                const isSelected = getColorFamily(colorMode) === family
+                return (
+                  <button
+                    key={family}
+                    type="button"
+                    aria-pressed={isSelected}
+                    onClick={() => selectColor(family)}
+                    className={cn(
+                      'flex h-10 w-full items-center gap-2.5 rounded-md px-2.5 text-left transition-colors duration-150',
+                      isSelected
+                        ? 'bg-accent text-foreground'
+                        : 'text-muted-foreground hover:bg-accent/60 hover:text-foreground'
+                    )}
+                  >
+                    <span
+                      className="h-3.5 w-3.5 shrink-0 rounded-full shadow-[inset_0_0_0_1px_oklch(0_0_0/0.18)]"
+                      style={{ backgroundColor: hex }}
+                      aria-hidden="true"
+                    />
+                    <span className="flex-1 text-[12.5px] font-medium">{name}</span>
+                    {isSelected && <Check className="h-3.5 w-3.5 text-foreground" aria-hidden="true" />}
+                  </button>
+                )
+              })}
+            </div>
+
+            <div className="border-t border-border p-1.5">
+              <p className="px-2.5 pb-1 pt-1.5 text-[10px] font-medium uppercase tracking-[0.08em] text-dim">
+                Mode
+              </p>
+              {MODE_TYPES.map(({ type, name, icon: Icon }) => {
+                const isSelected = getModeType(colorMode) === type
+                return (
+                  <button
+                    key={type}
+                    type="button"
+                    aria-pressed={isSelected}
+                    onClick={() => selectMode(type)}
+                    className={cn(
+                      'flex h-9 w-full items-center gap-2.5 rounded-md px-2.5 text-left transition-colors duration-150',
+                      isSelected
+                        ? 'bg-accent text-foreground'
+                        : 'text-muted-foreground hover:bg-accent/60 hover:text-foreground'
+                    )}
+                  >
+                    <Icon className="h-3.5 w-3.5 shrink-0" aria-hidden="true" />
+                    <span className="flex-1 text-[12.5px] font-medium">{name}</span>
+                    {isSelected && <Check className="h-3.5 w-3.5 text-foreground" aria-hidden="true" />}
+                  </button>
+                )
+              })}
+            </div>
+
+            <div className="border-t border-border px-4 py-3.5">
+              <p className="flex items-center gap-1.5 text-[11px] font-medium text-foreground">
+                <ActiveModeIcon className="h-3 w-3 text-dim" aria-hidden="true" />
+                {activeMode.name}
+              </p>
+              <p className="mt-1.5 text-[11px] leading-relaxed text-dim">
+                {activeMode.description}
+              </p>
+            </div>
+          </div>
         </aside>
 
-        {/* Center — Preview or Drop Zone */}
-        <div className="flex-1 min-w-0">
-          {convertedFiles.length > 0 ? (
-            <PreviewPanel
-              file={convertedFiles[selectedIndex]}
-              currentPage={currentPage}
-              zoom={zoom}
-              isProcessing={isProcessing}
-              onPageChange={setCurrentPage}
-              onZoomChange={setZoom}
-              onDownload={() => downloadFile(convertedFiles[selectedIndex])}
-            />
+        {/* Preview or upload */}
+        <div className="order-1 min-w-0 lg:order-2">
+          {hasFiles ? (
+            <>
+              {mobileInkControls}
+              <PreviewPanel
+                file={convertedFiles[selectedIndex]}
+                currentPage={currentPage}
+                zoom={zoom}
+                isProcessing={isProcessing}
+                onPageChange={setCurrentPage}
+                onZoomChange={setZoom}
+                onDownload={() => downloadFile(convertedFiles[selectedIndex])}
+              />
+            </>
           ) : (
             <>
-              {/* Hero */}
-              <div className="text-center py-8 sm:py-10">
-                <h2 className="text-3xl font-bold tracking-tight">Print with any ink color</h2>
-                <p className="text-muted-foreground mt-3 max-w-lg mx-auto text-sm sm:text-base">
-                  Out of black ink? Upload your documents and convert all text to print using only the ink you have — blue, brown, green, purple, or red.
+              <div className="mb-7">
+                <h1 className="text-[27px] font-medium leading-[1.1] tracking-[-0.035em] text-foreground sm:text-[32px]">
+                  Print with any ink color.
+                </h1>
+                <p className="mt-2.5 max-w-xl text-[13.5px] leading-relaxed text-muted-foreground">
+                  Out of black ink? Convert black text and images to the color you have, then print.
+                  Everything runs in your browser.
                 </p>
               </div>
+
+              {mobileInkControls}
 
               <DropZone
                 accept="image/*,.pdf"
                 isProcessing={isProcessing}
-                processingLabel="Converting..."
-                hint="Images (PNG, JPG) and PDF files"
+                processingLabel="Converting…"
+                hint="PDF, PNG or JPG. Multiple files are converted at once."
+                tone={{ name: activeColor.name, hex: activeColor.hex }}
                 onFiles={handleFiles}
               />
 
-              {/* Feature grid */}
-              <div className="grid grid-cols-2 sm:grid-cols-4 gap-3 sm:gap-4 py-8">
-                <div className="flex flex-col gap-2 p-3 rounded-lg border border-border/50 bg-card">
-                  <div className="flex gap-1">
-                    {COLOR_FAMILIES.map(({ bgClass }) => (
-                      <div key={bgClass} className={`h-3 w-3 rounded-full ${bgClass}`} />
-                    ))}
-                  </div>
-                  <p className="text-xs font-medium">5 ink colors</p>
-                  <p className="text-[11px] text-muted-foreground leading-relaxed">Blue, brown, green, purple, and red</p>
-                </div>
-                <div className="flex flex-col gap-2 p-3 rounded-lg border border-border/50 bg-card">
-                  <Sparkles className="h-4 w-4 text-primary" />
-                  <p className="text-xs font-medium">3 conversion modes</p>
-                  <p className="text-[11px] text-muted-foreground leading-relaxed">Smart, grayscale-only, or full tint</p>
-                </div>
-                <div className="flex flex-col gap-2 p-3 rounded-lg border border-border/50 bg-card">
-                  <div className="flex gap-1.5">
-                    <FileText className="h-4 w-4 text-primary" />
-                    <ImageIcon className="h-4 w-4 text-primary" />
-                  </div>
-                  <p className="text-xs font-medium">PDF &amp; images</p>
-                  <p className="text-[11px] text-muted-foreground leading-relaxed">Multi-page PDFs, PNG, and JPG</p>
-                </div>
-                <div className="flex flex-col gap-2 p-3 rounded-lg border border-border/50 bg-card">
-                  <Lock className="h-4 w-4 text-primary" />
-                  <p className="text-xs font-medium">100% private</p>
-                  <p className="text-[11px] text-muted-foreground leading-relaxed">Processed locally, nothing uploaded</p>
-                </div>
-              </div>
-
-              {/* Mode explanations */}
-              <div className="rounded-lg border border-border/50 bg-card p-4 space-y-3">
-                <p className="text-xs font-semibold text-muted-foreground uppercase tracking-wide">Conversion modes</p>
-                <div className="grid grid-cols-1 sm:grid-cols-3 gap-3">
-                  {MODE_TYPES.map(({ type, name, icon }) => (
-                    <div key={type} className="flex gap-2.5">
-                      <div className="mt-0.5 text-primary shrink-0">{icon}</div>
-                      <div>
-                        <p className="text-xs font-medium">{name}</p>
-                        <p className="text-[11px] text-muted-foreground mt-0.5">
-                          {type === 'auto' && 'Detects black/dark text and converts only that, leaving colored content unchanged.'}
-                          {type === 'grayscale' && 'Converts only pixels that are black, white, or gray — preserves any existing color.'}
-                          {type === 'all' && 'Applies a full color tint to the entire document — great for photos and graphics.'}
-                        </p>
-                      </div>
-                    </div>
-                  ))}
-                </div>
-              </div>
-
-              {/* How it works */}
-              <div className="hidden sm:grid grid-cols-3 gap-6 py-8">
-                {[
-                  { n: 1, label: 'Pick your ink color and mode' },
-                  { n: 2, label: 'Upload PDFs or images' },
-                  { n: 3, label: 'Download and print' }
-                ].map(({ n, label }) => (
-                  <div key={n} className="flex flex-col items-center gap-2 text-center">
-                    <div className="h-8 w-8 rounded-full bg-primary text-primary-foreground flex items-center justify-center text-sm font-semibold">
-                      {n}
-                    </div>
-                    <p className="text-xs text-muted-foreground">{label}</p>
+              <div className="mt-4 grid grid-cols-2 gap-px overflow-hidden rounded-xl border border-border bg-border sm:grid-cols-4">
+                {FEATURES.map(({ icon: Icon, title, body }) => (
+                  <div key={title} className="bg-background p-4">
+                    <Icon className="h-3.5 w-3.5 text-dim" aria-hidden="true" />
+                    <p className="mt-2.5 text-[12px] font-medium text-foreground">{title}</p>
+                    <p className="mt-1 text-[11px] leading-relaxed text-dim">{body}</p>
                   </div>
                 ))}
               </div>
 
-              {/* Speed note */}
-              <div className="flex items-center gap-2 justify-center pb-4">
-                <Zap className="h-3.5 w-3.5 text-muted-foreground" />
-                <p className="text-xs text-muted-foreground">Processing is instant — everything runs in your browser</p>
-              </div>
+              <section className="mt-8 border-t border-border pt-5">
+                <div className="flex items-baseline justify-between gap-4">
+                  <h2 className="text-[12px] font-medium text-foreground">How it works</h2>
+                  <p className="font-mono text-[10px] uppercase tracking-[0.08em] text-dim">3 steps</p>
+                </div>
+                <ol className="mt-4 grid gap-4 sm:grid-cols-3 sm:gap-6">
+                  {STEPS.map((step, index) => (
+                    <li key={step} className="flex items-start gap-2.5">
+                      <span className="flex h-5 w-5 shrink-0 items-center justify-center rounded-full border border-border font-mono text-[10px] text-dim">
+                        {index + 1}
+                      </span>
+                      <span className="text-[11.5px] leading-relaxed text-muted-foreground">{step}</span>
+                    </li>
+                  ))}
+                </ol>
+              </section>
             </>
           )}
         </div>
 
-        {/* Right Sidebar — File List */}
-        {convertedFiles.length > 0 && (
-          <FileListSidebar
-            files={convertedFiles}
-            selectedIndex={selectedIndex}
-            isProcessing={isProcessing}
-            onSelect={setSelectedIndex}
-            onRemove={removeFile}
-            onDownloadAll={() => convertedFiles.forEach(downloadFile)}
-            onClearAll={clearAll}
-            renderMeta={(file) =>
-              file.type === 'pdf' && file.pageCount
-                ? <p className="text-[10px] text-muted-foreground">{file.pageCount} pages</p>
-                : null
-            }
-          />
+        {/* Files */}
+        {hasFiles && (
+          <div className="order-3 lg:col-span-2 xl:col-span-1">
+            <FileListSidebar
+              files={convertedFiles}
+              selectedIndex={selectedIndex}
+              isProcessing={isProcessing}
+              onSelect={setSelectedIndex}
+              onRemove={removeFile}
+              onAdd={() => addInputRef.current?.click()}
+              onDownloadAll={() => convertedFiles.forEach(downloadFile)}
+              onClearAll={clearAll}
+              renderMeta={(file) =>
+                file.type === 'pdf' && file.pageCount
+                  ? <p className="font-mono text-[10px] text-dim">{file.pageCount} pages</p>
+                  : null
+              }
+            />
+          </div>
         )}
       </div>
+
+      <input
+        ref={addInputRef}
+        type="file"
+        accept="image/*,.pdf"
+        multiple
+        className="sr-only"
+        tabIndex={-1}
+        aria-hidden="true"
+        onChange={(e) => {
+          if (e.target.files?.length) {
+            handleFiles(e.target.files)
+            e.target.value = ''
+          }
+        }}
+      />
 
       <PasswordModal
         show={prompt.show}
