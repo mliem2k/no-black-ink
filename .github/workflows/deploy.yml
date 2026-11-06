@@ -1,0 +1,26 @@
+name: Deploy
+
+on:
+  push:
+    branches: [main]
+    paths:
+      - "src/**"
+      - "public/**"
+      - "index.html"
+      - "package.json"
+      - "pnpm-lock.yaml"
+      - ".github/workflows/deploy.yml"
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  deploy:
+    uses: mliem2k/kit/.github/workflows/deploy-pages.yml@main
+    with:
+      project: no-black-ink
+      install_command: npx --yes pnpm@9 install --frozen-lockfile
+      build_command: npx --yes pnpm@9 build
+      output_directory: dist
+    secrets: inherit
